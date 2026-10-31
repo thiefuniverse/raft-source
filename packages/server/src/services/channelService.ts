@@ -11151,10 +11151,10 @@ function buildRisingWaveInboxItemsServingQuery(
         ${timestampText('p."lastActivityAtRaw"')} AS "lastActivityAt",
         CASE WHEN p."lastReplyAtRaw" IS NULL THEN NULL::text ELSE ${timestampText('p."lastReplyAtRaw"')} END AS "lastReplyAt",
         p."replyCount",
-        p."taskNumber",
-        p."taskStatus",
-        p."taskClaimedByType",
-        p."taskClaimedById",
+        t.task_number AS "taskNumber",
+        t.status AS "taskStatus",
+        t.claimed_by_type AS "taskClaimedByType",
+        t.claimed_by_id AS "taskClaimedById",
         p."taskClaimedByName",
         (CASE WHEN p."mentionOnly" THEN p."hasAnyMention" ELSE p."hasMention" END) AS "hasMention",
         -- TODO(firstMentionMessageId): materialize first_mention_message_id in
@@ -11167,6 +11167,7 @@ function buildRisingWaveInboxItemsServingQuery(
         p."readCursorPresent",
         p."activityAt"
       FROM page p
+      LEFT JOIN rw_tasks t ON t.message_id = p."parentMessageId"
     )
     SELECT
       page_enriched.*,

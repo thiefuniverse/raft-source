@@ -122,6 +122,9 @@ test.skipIf(!configured)("Activity readers: items, mentions, scoped channel, uni
   const thread = all.items.find((item) => item.kind === "thread" && item.threadChannelId === f.thread.id);
   assert.ok(thread, "the followed thread appears in Activity");
   assert.equal(thread.unreadCount, 1);
+  assert.equal(thread.taskNumber, null);
+  assert.equal(thread.taskStatus, null);
+  assert.equal(thread.taskClaimedByName, null);
 
   const mentions = await getInboxItems(f.receiverServer.id, f.receiver.id, { filter: "mentions", limit: 50 });
   assert.deepEqual(
@@ -459,14 +462,19 @@ test.skipIf(!configured)("rw_followed_threads_v5 carries the parent's task (rw_t
     const read = await queryRisingWave<{ n: string }>(
       pool,
       `SELECT count(*) AS n FROM rw_followed_threads_v5
-        WHERE server_id = $1 AND user_id = $2 AND thread_channel_id = $3 AND task_id = $4 AND reply_count = 1`,
+        WHERE server_id = $1 AND user_id = $2 AND thread_channel_id = $3 AND task_id = $4 AND reply_count = 1
+          AND EXISTS (
+            SELECT 1 FROM ${UNIFIED_CHAIN_VIEWS.serving} i
+            WHERE i.server_id = $1 AND i.receiver_type = 'user' AND i.receiver_id = $2
+              AND i.thread_channel_id = $3 AND i.reply_count = 1
+          )`,
       [f.receiverServer.id, f.receiver.id, thread.id, task.id],
     );
     propagated = Number(read.result.rows[0]?.n) === 1;
     if (propagated) break;
     await new Promise((resolve) => setTimeout(resolve, 500));
   } while (Date.now() < deadline);
-  assert.ok(propagated, "the thread, its reply and its task reached rw_followed_threads_v5");
+  assert.ok(propagated, "the thread, its reply and its task reached the followed-thread and inbox serving views");
 
   const rw = await getFollowedThreads(f.receiverServer.id, f.receiver.id);
   const legacy = await getFollowedThreads(f.receiverServer.id, f.receiver.id, undefined, { forceLegacyPath: true });
@@ -476,6 +484,18 @@ test.skipIf(!configured)("rw_followed_threads_v5 carries the parent's task (rw_t
   assert.equal(rwRow.taskId, task.id);
   assert.equal(rwRow.taskClaimedById, f.sender.id);
   assert.equal(rwRow.parentMessagePreview, `${longParent.slice(0, 100)}…`);
+
+  const inbox = await getInboxItems(f.receiverServer.id, f.receiver.id, { filter: "all", limit: 50 });
+  const canonical = await getInboxItems(f.receiverServer.id, f.receiver.id, { filter: "all", limit: 50, forceCanonicalPostgres: true });
+  const inboxThread = inbox.items.find((item) => item.threadChannelId === thread.id);
+  const canonicalThread = canonical.items.find((item) => item.threadChannelId === thread.id);
+  assert.ok(inboxThread, "the task thread appears in the RisingWave inbox");
+  assert.ok(canonicalThread, "the task thread appears in the canonical inbox");
+  for (const item of [inboxThread, canonicalThread]) {
+    assert.equal(item.taskNumber, 1);
+    assert.equal(item.taskStatus, "in_progress");
+    assert.equal(item.taskClaimedByName, f.sender.name);
+  }
 }, 180_000);
 
 test.skipIf(!configured)("followed-thread stats are served by rw_followed_threads_v5 (legacy path)", async () => {
