@@ -21,6 +21,7 @@ const ZH_CN: Readonly<Record<string, string>> = Object.freeze({
   "API URL": "API URL",
   "Base URL": "Base URL",
   "Claude Command": "Claude 命令",
+  "Claude environment": "Claude 环境",
   "Effort": "推理强度",
   "Environment Variables": "环境变量",
   "Fast mode": "快速模式",
@@ -34,6 +35,8 @@ const ZH_CN: Readonly<Record<string, string>> = Object.freeze({
   "Thinking effort": "思考强度",
   "Tier": "档位",
   // Field hints
+  "CAC inherits this environment's Claude version, model, login, hooks and proxy. Tool network settings stay unchanged. Windows with CAC 1.5.7 is required.":
+    "CAC 沿用所选环境的 Claude 版本、模型、登录、Hooks 和代理，工具网络保持现有设置。需要 Windows 和 CAC 1.5.7。",
   "Available values are declared by the selected model.": "可选值由所选模型决定。",
   "Available values depend on the selected model.": "可选值取决于所选模型。",
   "Built-in Pi is ready to use without local runtime setup. It uses the provider key entered here.":
@@ -78,6 +81,7 @@ const ZH_CN: Readonly<Record<string, string>> = Object.freeze({
   "Configured Default / Auto": "已配置的默认值 / 自动",
   "Custom": "自定义",
   "Default": "默认",
+  "Default Claude": "默认 Claude",
 });
 
 const TRANSLATIONS: Readonly<Record<Exclude<RuntimeFormCopyLocale, "en">, Readonly<Record<string, string>>>> = Object.freeze({

@@ -5,6 +5,8 @@ import type { Server as SocketServer } from "socket.io";
 import type { WebSocket } from "ws";
 import {
   summarizeTurnsFromLog,
+  CLAUDE_CAC_CAPABILITY,
+  type ClaudeCacEnvironmentOutcome,
   type ActivityTurnOutcome,
   type ExternalHookTurnBoundary,
   type ActivityTurnSummary,
@@ -10857,6 +10859,7 @@ export class AgentOrchestrator extends EventEmitter {
       case "machine:workspace:delete_result":
       case "machine:migration:source_workspace_archive_result":
       case "machine:runtime_models:result":
+      case "machine:claude_cac:result":
       case "machine:provider_probe:result":
       case "agent:diagnostic:session_transcript_result":
       case "agent:diagnostic:feedback_transcript_result":
@@ -13804,6 +13807,10 @@ export class AgentOrchestrator extends EventEmitter {
     }
 
     const normalizedRuntimeConfig = hydrateRuntimeConfig(agent);
+    if (normalizedRuntimeConfig.runtime === "claude" && normalizedRuntimeConfig.cacEnvironment
+      && !this.hasMachineCapability(agent.machineId, CLAUDE_CAC_CAPABILITY)) {
+      throw new Error("Selected Computer does not support CAC environments; update its Windows Raft Computer before starting this agent");
+    }
     const launchRuntimeFields = runtimeConfigToLaunchFields(normalizedRuntimeConfig);
     if (launchRuntimeFields.runtime === "kimi-sdk" && launchRuntimeFields.reasoningEffort !== null) {
       const detected = await this.detectMachineRuntimeModels(agent.machineId, "kimi-sdk");
@@ -14937,6 +14944,38 @@ export class AgentOrchestrator extends EventEmitter {
    * `force`: bypass the Computer's model-list cache (a form's refresh action,
    * `?refresh=1`). Daemons without the cache ignore it; they detect every time.
    */
+  /** Called after machine-affinity routing, never reads the Server's CAC state. */
+  async detectMachineClaudeCacEnvironments(machineId: string): Promise<ClaudeCacEnvironmentOutcome> {
+    const connection = this.machineConnections.get(machineId);
+    if (!connection || connection.ws.readyState !== 1 || this.isMachineHeartbeatStale(connection)) {
+      throw new RouteFailureError("daemon_offline", "Computer is offline");
+    }
+    if (!connection.capabilities.has(CLAUDE_CAC_CAPABILITY)) {
+      return { kind: "unavailable", reason: "unsupported" };
+    }
+    const requestId = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const finish = (error?: Error, outcome?: ClaudeCacEnvironmentOutcome) => {
+        clearTimeout(timeout);
+        this.removeListener(`machine:response:${machineId}`, handler);
+        if (error) reject(error);
+        else resolve(outcome!);
+      };
+      const handler = (msg: MachineToServerMessage) => {
+        if (msg.type !== "machine:claude_cac:result" || msg.requestId !== requestId) return;
+        if (this.machineConnections.get(machineId) !== connection) {
+          finish(new RouteFailureError("daemon_offline", "Computer connection changed"));
+          return;
+        }
+        finish(undefined, msg.outcome);
+      };
+      const timeout = setTimeout(() => finish(new RouteFailureError("daemon_timeout", "CAC environment discovery timed out")), 10_000);
+      this.on(`machine:response:${machineId}`, handler);
+      void this.sendRequiredToMachine(machineId, { type: "machine:claude_cac:detect", requestId })
+        .catch(() => finish(new RouteFailureError("daemon_offline", "Computer is offline")));
+    });
+  }
+
   async detectMachineRuntimeModels(
     machineId: string,
     runtime: string,

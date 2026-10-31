@@ -57,6 +57,7 @@ const wire = (value: unknown) => JSON.parse(JSON.stringify(value)) as Record<str
 test("claude, cursor and copilot forms: fields by kind, in order", () => {
   const expectations: Record<string, Array<[string, string, boolean, boolean]>> = {
     claude: [
+      ["cacEnvironment", "select", false, false],
       ["provider", "select", true, false],
       ["apiUrl", "url", false, false],
       ["apiKey", "secret", false, false],
@@ -88,7 +89,7 @@ test("claude, cursor and copilot forms: fields by kind, in order", () => {
   // Claude's API URL and key show only for a Custom provider.
   const claude = parseRuntimeFormV2(wire(buildRuntimeFormV2("claude")))!;
   for (const key of ["apiUrl", "apiKey"]) {
-    assert.deepEqual(claude.fields.find((field) => field.key === key)?.visibleWhen, [{ key: "provider", in: ["custom"] }], key);
+    assert.deepEqual(claude.fields.find((field) => field.key === key)?.visibleWhen, [{ key: "cacEnvironment", in: [""] }, { key: "provider", in: ["custom"] }], key);
   }
   assert.deepEqual((buildRuntimeFormV2("claude").capabilities as { writeOnlyPointers: string[] }).writeOnlyPointers, ["/apiKey"]);
 });
@@ -333,9 +334,11 @@ test("edit values round-trip the stored config; the API key is never part of the
     assertSameAsLegacy(saved as Record<string, unknown>, config, JSON.stringify(config));
   }
   assert.deepEqual(runtimeFormValuesFromRuntimeConfig(stored[0]!), {
+    cacEnvironment: "",
     provider: "custom", apiUrl: "https://gw.example.test", model: "sonnet", reasoningEffort: "high", fastMode: true, command: "/opt/claude", envVars: { KEEP: "1" },
   });
   assert.deepEqual(runtimeFormValuesFromRuntimeConfig(stored[1]!), {
+    cacEnvironment: "",
     provider: "default", model: "vendor/private-model", reasoningEffort: "", fastMode: false, command: "", envVars: {},
   });
   assert.deepEqual(runtimeFormValuesFromRuntimeConfig(stored[2]!), { model: "my-org/cursor-custom", envVars: { C: "1" } });

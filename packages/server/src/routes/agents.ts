@@ -1325,6 +1325,28 @@ async function applyRuntimeFormV2LiveModels(
   return null;
 }
 
+async function validateClaudeCacForWrite(
+  req: Request, res: Response, config: RuntimeConfig | null | undefined, machineId: string | null | undefined,
+): Promise<boolean> {
+  if (config?.runtime !== "claude" || !config.cacEnvironment) return true;
+  const orchestrator = req.app.get("agentOrchestrator") as AgentOrchestrator;
+  if (machineId) {
+    const routing = await handleMachineLocalRouting(req, res, machineId, () => orchestrator.hasMachineLocally(machineId));
+    if (routing === "handled") return false;
+    if (routing === "confirmed_local") {
+      try {
+        const outcome = await orchestrator.detectMachineClaudeCacEnvironments(machineId);
+        if (outcome.kind === "live" && outcome.environments.some((environment) => environment.name === config.cacEnvironment)) return true;
+      } catch { /* Discovery errors are intentionally credential-free. */ }
+    }
+  }
+  res.status(409).json({
+    error: "Selected CAC environment is unavailable. Refresh environments or update the Windows Computer and its CAC configuration.",
+    issues: [{ code: "cac_environment_unavailable", pointer: "/formValues/cacEnvironment" }],
+  });
+  return false;
+}
+
 async function currentUserCanActOnAgent(
   serverId: string,
   userId: string,
@@ -1733,6 +1755,7 @@ agentRouter.post("/", async (req, res) => {
       res.status(400).json({ error: normalizedConfig.error });
       return;
     }
+    if (!await validateClaudeCacForWrite(req, res, normalizedConfig.runtimeConfig, assignedMachine?.id)) return;
     if (v2Submitted) {
       const live = await applyRuntimeFormV2LiveModels(req, normalizedConfig, v2SubmittedReasoningEffort, assignedMachine?.id);
       if (live) {
@@ -3288,6 +3311,7 @@ agentRouter.patch("/:id", async (req, res) => {
       res.status(400).json({ error: normalizedConfig.error });
       return;
     }
+    if (!await validateClaudeCacForWrite(req, res, normalizedConfig?.runtimeConfig, existing.machineId)) return;
     if (v2Submitted && normalizedConfig) {
       const live = await applyRuntimeFormV2LiveModels(req, normalizedConfig, v2SubmittedReasoningEffort, existing.machineId);
       if (live) {

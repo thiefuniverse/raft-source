@@ -29,6 +29,8 @@ import { createHash } from "node:crypto";
 
 import {
   BASE_REASONING_EFFORTS,
+  CLAUDE_CAC_INHERITED_MODEL,
+  isClaudeCacEnvironmentName,
   getDefaultModel,
   getRuntimeProviderDisplayName,
   isBuiltInRuntimeGatewayProviderId,
@@ -154,7 +156,8 @@ export interface RuntimeFormOptionSourceContext {
   formRevision?: string;
   /** The caller may list this server's provider connections (manageExternalAuth). */
   connectionsVisible?: boolean;
-  agentOrchestrator: Pick<AgentOrchestrator, "detectMachineRuntimeModels" | "detectMachineRuntimeModelsWithAuthority">;
+  agentOrchestrator: Pick<AgentOrchestrator, "detectMachineRuntimeModels" | "detectMachineRuntimeModelsWithAuthority">
+    & Partial<Pick<AgentOrchestrator, "detectMachineClaudeCacEnvironments">>;
   /**
    * Machine-affinity routing: make sure this replica owns the Computer's
    * socket, replaying the request to the owner otherwise. "handled" means a
@@ -897,6 +900,7 @@ export interface ReasoningModelFormOptions {
   customProvider?: boolean;
   /** Claude only (supportsRuntimeCommand): the executable to launch (runtimeConfig.command). */
   command?: boolean;
+  cacEnvironment?: boolean;
   modelHint: string;
 }
 
@@ -942,6 +946,7 @@ const CUSTOM_PROVIDER_OPTIONS = [
 /** Every field key of a form built with these options, in order. */
 function reasoningModelFieldKeys(options: ReasoningModelFormOptions): string[] {
   return [
+    ...(options.cacEnvironment ? ["cacEnvironment"] : []),
     ...(options.customProvider ? ["provider", "apiUrl", "apiKey"] : []),
     "model",
     ...(options.reasoning ? ["reasoningEffort"] : []),
@@ -967,6 +972,7 @@ function buildReasoningModelForm(runtimeId: string, options: ReasoningModelFormO
       additionalProperties: false,
       required: reasoningModelRequired(options),
       properties: {
+        ...(options.cacEnvironment ? { cacEnvironment: { type: "string", title: "Claude environment" } } : {}),
         ...(options.customProvider
           ? {
               provider: { type: "string", title: "Provider", minLength: 1 },
@@ -984,13 +990,21 @@ function buildReasoningModelForm(runtimeId: string, options: ReasoningModelFormO
     uiSchema: {
       order: reasoningModelFieldKeys(options),
       layout: { advanced: [...(options.command ? ["/command"] : []), "/envVars"] },
-      visibility: options.customProvider
-        ? [
+      visibility: [
+        ...(options.cacEnvironment
+          ? ["provider", "apiUrl", "apiKey", "model", "reasoningEffort", "fastMode", "command"].map((key) => ({
+              pointer: `/${key}`, when: { pointer: "/cacEnvironment", in: [""] },
+            })) : []),
+        ...(options.customProvider ? [
             { pointer: "/apiUrl", when: { pointer: "/provider", in: ["custom"] } },
             { pointer: "/apiKey", when: { pointer: "/provider", in: ["custom"] } },
-          ]
-        : [],
+          ] : []),
+      ],
       localization: {
+        ...(options.cacEnvironment ? { cacEnvironment: {
+          label: "Claude environment",
+          hint: "CAC inherits this environment's Claude version, model, login, hooks and proxy. Tool network settings stay unchanged. Windows with CAC 1.5.7 is required.",
+        } } : {}),
         ...(options.customProvider
           ? {
               provider: {
@@ -1027,6 +1041,7 @@ function buildReasoningModelForm(runtimeId: string, options: ReasoningModelFormO
       forbiddenPointers: ["/hostUserState"],
     },
     optionSources: {
+      ...(options.cacEnvironment ? { cacEnvironment: { ...ref, sourceId: "cacEnvironment", kind: "select", pointer: "/cacEnvironment" } } : {}),
       ...(options.customProvider ? { provider: { ...ref, sourceId: "provider", kind: "select", pointer: "/provider" } } : {}),
       model: { ...ref, sourceId: "model", kind: "select", pointer: "/model" },
     },
@@ -1135,7 +1150,7 @@ function reasoningModelProjectionIssues(form: RuntimeFormV2Definition, options: 
   ) {
     return [{ code: "definition_data_schema_drift", pointer: "/dataSchema" }];
   }
-  const sources = options.customProvider ? "provider\0model" : "model";
+  const sources = [...(options.cacEnvironment ? ["cacEnvironment"] : []), ...(options.customProvider ? ["provider"] : []), "model"].join("\0");
   if (
     Object.keys(form.optionSources ?? {}).join("\0") !== sources
     || form.optionSources?.model?.pointer !== "/model"
@@ -1220,6 +1235,29 @@ function reasoningModelFormEntry(runtimeId: string, options: ReasoningModelFormO
     buildForm: () => buildReasoningModelForm(runtimeId, options),
     validateProjection: () => reasoningModelProjectionIssues(buildReasoningModelForm(runtimeId, options), options),
     async resolveOptionSource(context) {
+      if (options.cacEnvironment && context.sourceId === "cacEnvironment") {
+        const routing = await context.routeToComputer();
+        if (routing === "handled") return { kind: "handled" };
+        let reason: RuntimeFormV2OptionSourceReason | null = routing === "confirmed_local" ? "unsupported" : "machine_offline";
+        const choices: AgentCreateFormOption[] = [{ value: "", label: "Default Claude" }];
+        if (routing === "confirmed_local" && context.agentOrchestrator.detectMachineClaudeCacEnvironments) {
+          try {
+            const outcome = await context.agentOrchestrator.detectMachineClaudeCacEnvironments(context.machineId);
+            if (outcome.kind === "live") {
+              reason = null;
+              choices.push(...outcome.environments.map((entry) => ({
+                value: entry.name,
+                label: `CAC: ${entry.name}${entry.model ? ` · ${entry.model}` : ""}${entry.version ? ` · Claude ${entry.version}` : ""}`,
+              })));
+            } else reason = outcome.reason;
+          } catch (error) { reason = optionSourceReasonForProbeError(error); }
+        }
+        return { kind: "source", source: {
+          ...simpleFormRef(runtimeId), sourceId: "cacEnvironment", kind: "select", pointer: "/cacEnvironment",
+          options: choices, defaultValue: "", customValueAllowed: false,
+          ...optionSourceStatusFields(reason, true),
+        } };
+      }
       if (options.customProvider && context.sourceId === "provider") {
         return { kind: "source", source: customProviderOptionSource(runtimeId) };
       }
@@ -1235,6 +1273,14 @@ function reasoningModelFormEntry(runtimeId: string, options: ReasoningModelFormO
       };
     },
     runtimeConfigFromValues(values, envVars, valueOptions) {
+      if (options.cacEnvironment && values.cacEnvironment !== undefined && values.cacEnvironment !== "") {
+        if (!isClaudeCacEnvironmentName(values.cacEnvironment)) return formValueIssue("invalid_cac_environment", "cacEnvironment");
+        return { ok: true, runtimeConfig: {
+          version: RUNTIME_CONFIG_VERSION, runtime: "claude", provider: { kind: "default" },
+          cacEnvironment: values.cacEnvironment, model: { kind: "custom", name: CLAUDE_CAC_INHERITED_MODEL },
+          mode: { kind: "default" }, reasoningEffort: null, envVars,
+        } };
+      }
       const modelValue = typeof values.model === "string" ? values.model.trim() : "";
       if (!modelValue) return formValueIssue("model_required", "model");
       // A form without a reasoning field ignores a stray value, like fastMode below.
@@ -1281,6 +1327,7 @@ function reasoningModelFormEntry(runtimeId: string, options: ReasoningModelFormO
       const provider = isPlainRecord(runtimeConfig.provider) ? runtimeConfig.provider : null;
       const custom = provider?.kind === "custom";
       return {
+        ...(options.cacEnvironment ? { cacEnvironment: typeof runtimeConfig.cacEnvironment === "string" ? runtimeConfig.cacEnvironment : "" } : {}),
         // The API key is write-only: never part of the values.
         ...(options.customProvider
           ? {
@@ -1288,7 +1335,7 @@ function reasoningModelFormEntry(runtimeId: string, options: ReasoningModelFormO
               ...(custom ? { apiUrl: typeof provider.apiUrl === "string" ? provider.apiUrl : "" } : {}),
             }
           : {}),
-        model: modelValueOf(runtimeConfig),
+        model: options.cacEnvironment && runtimeConfig.cacEnvironment ? getDefaultModel(runtimeId) : modelValueOf(runtimeConfig),
         ...(options.reasoning
           ? { reasoningEffort: typeof runtimeConfig.reasoningEffort === "string" ? runtimeConfig.reasoningEffort : "" }
           : {}),
@@ -1358,6 +1405,7 @@ const claudeEntry = reasoningModelFormEntry("claude", {
   reasoning: true,
   customProvider: true,
   command: true,
+  cacEnvironment: true,
   modelHint: "Models Claude Code accepts. You can also type a model ID.",
 });
 
@@ -1855,6 +1903,7 @@ export async function reconcileRuntimeFormV2SubmissionWithLiveModels(input: {
   machineId: string | null | undefined;
   detect: (machineId: string, runtime: string) => Promise<RuntimeModelSourceOutcome>;
 }): Promise<LiveModelReconciliation> {
+  if (input.runtimeConfig.runtime === "claude" && input.runtimeConfig.cacEnvironment) return { kind: "unchanged" };
   const entry = runtimeFormV2Entry(input.runtimeConfig.runtime);
   if (!entry?.reconcileWithLiveModels || !input.machineId) return { kind: "unchanged" };
   const effort = typeof input.submittedReasoningEffort === "string" && input.submittedReasoningEffort

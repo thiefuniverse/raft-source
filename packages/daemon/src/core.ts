@@ -6,6 +6,7 @@ import {
   writeRuntimeCliVersionState,
 } from "./runtimeCliVersionTracker";
 import path from "node:path";
+import { discoverClaudeCacEnvironments } from "./drivers/claudeCac";
 import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
@@ -15,6 +16,7 @@ import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import {
   createTraceScopeTracer,
+  CLAUDE_CAC_CAPABILITY,
   AGENT_MIGRATION_CAPABILITY,
   COMPUTER_CAPABILITY_SUPERVISOR_MUTATIONS,
   currentDate,
@@ -4829,6 +4831,11 @@ export class DaemonCore {
         break;
       }
 
+      case "machine:claude_cac:detect": {
+        this.connection.send({ type: "machine:claude_cac:result", requestId: msg.requestId, outcome: discoverClaudeCacEnvironments() });
+        break;
+      }
+
       case "machine:runtime_models:detect": {
         const driver = getDriver(msg.runtime);
         const span = this.tracer.startSpan("daemon.runtime_models.detect", {
@@ -5443,6 +5450,7 @@ export class DaemonCore {
         "agent:stop",
         "agent:deliver",
         "workspace:files",
+        ...(process.platform === "win32" ? [CLAUDE_CAC_CAPABILITY] : []),
         DAEMON_CAPABILITY_SEQUENCED_STATUS,
         // RFC 071: agent:runtime:outcome v1, process spawned/exited, rebind
         // ack processInstanceId, catchupBatchId echo.

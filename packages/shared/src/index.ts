@@ -888,6 +888,7 @@ export type ServerToMachineMessage =
    * on every request anyway.
    */
   | { type: "machine:runtime_models:detect"; requestId: string; runtime: string; force?: boolean }
+  | { type: "machine:claude_cac:detect"; requestId: string }
   /**
    * Ask the owning Computer to run one bounded provider probe for an opaque
    * probe intent. Carries no credential, endpoint or connection id: the daemon
@@ -1583,6 +1584,11 @@ export type MachineToServerMessage =
       errorCode?: string;
     }
   | {
+      type: "machine:claude_cac:result";
+      requestId: string;
+      outcome: ClaudeCacEnvironmentOutcome;
+    }
+  | {
       type: "machine:runtime_models:result";
       requestId: string;
       /**
@@ -1847,7 +1853,27 @@ export type ClaudeRuntimeConfig = RuntimeConfigBase & {
   runtime: "claude";
   provider?: ClaudeRuntimeProviderConfig;
   command?: string | null;
+  /** Named environment on the Computer. CAC owns its model, login and proxy. */
+  cacEnvironment?: string | null;
 };
+
+export const CLAUDE_CAC_CAPABILITY = "claude:cac-environments:v1";
+/** Display mirror only; never sent to Claude as a model id. */
+export const CLAUDE_CAC_INHERITED_MODEL = "CAC (inherited)";
+export const isClaudeCacEnvironmentName = (value: unknown): value is string =>
+  typeof value === "string" && /^[a-zA-Z0-9_-]{1,128}$/.test(value);
+export const isClaudeCacControlledEnvKey = (key: string): boolean =>
+  /^(?:HOME|USERPROFILE|CLAUDE_CONFIG_DIR|ANTHROPIC_.*|CLAUDE_CODE_(?:EFFORT_LEVEL|OAUTH_TOKEN.*|USE_.*|SKIP_.*_AUTH)|(?:HTTPS?|ALL|NO)_PROXY|CAC_.*|_CAC_.*|RAFT_CAC_.*)$/i.test(key);
+
+export interface ClaudeCacEnvironment {
+  name: string;
+  version?: string;
+  model?: string;
+}
+
+export type ClaudeCacEnvironmentOutcome =
+  | { kind: "live"; environments: ClaudeCacEnvironment[] }
+  | { kind: "unavailable"; reason: "unsupported" | "missing_config" | "probe_failed" };
 
 export type PiRuntimeConfig = RuntimeConfigBase & {
   runtime: "pi";
@@ -3053,6 +3079,7 @@ export interface RuntimeConfigLaunchFields {
   reasoningEffort: RuntimeReasoningEffort | null;
   envVars: Record<string, string> | null;
   command?: string | null;
+  cacEnvironment?: string | null;
 }
 
 export type LaunchPlan = RuntimeConfigLaunchFields & { // Derived launch view; RuntimeConfig is the persisted source of truth, while LaunchPlan materializes legacy driver fields/env + trace after validation.
@@ -3074,6 +3101,7 @@ export type RuntimeConfigParseReason =
   | "invalid_env_vars"
   | "unsupported_command"
   | "invalid_command"
+  | "invalid_cac_environment"
   | "invalid_reasoning_effort"
   | "unsupported_reasoning_effort"
   | "unsupported_fast_mode";
@@ -3140,6 +3168,7 @@ const RUNTIME_CONFIG_FIELDS = [
   "reasoningEffort",
   "envVars",
   "command",
+  "cacEnvironment",
   "hostUserState",
   "loadLocalPlugins",
 ] as const;
@@ -3515,6 +3544,7 @@ function composeRuntimeConfig(input: {
   reasoningEffort?: RuntimeReasoningEffort | null;
   envVars?: Record<string, string> | null;
   command?: string | null;
+  cacEnvironment?: string | null;
   loadLocalPlugins?: boolean;
 }): RuntimeConfig {
   const base = {
@@ -3539,6 +3569,7 @@ function composeRuntimeConfig(input: {
       runtime: "claude",
       provider: input.provider as ClaudeRuntimeProviderConfig | undefined,
       ...(input.command ? { command: input.command } : {}),
+      ...(input.cacEnvironment ? { cacEnvironment: input.cacEnvironment } : {}),
     };
   }
   if (input.runtime === "pi") {
@@ -3711,6 +3742,23 @@ export function parseRuntimeConfig(input: RuntimeConfigHydrationInput): RuntimeC
     ? null
     : reasoningEffort.value;
 
+  const cacEnvironment = raw.cacEnvironment;
+  if (runtime === "claude" && !cacEnvironment && model.kind === "custom" && model.name === CLAUDE_CAC_INHERITED_MODEL) {
+    return runtimeConfigError("invalid_model", "The inherited CAC model requires runtimeConfig.cacEnvironment", runtime);
+  }
+  if (cacEnvironment !== undefined && cacEnvironment !== null) {
+    if (runtime !== "claude" || !isClaudeCacEnvironmentName(cacEnvironment)) {
+      return runtimeConfigError("invalid_cac_environment", "runtimeConfig.cacEnvironment must be a valid Claude CAC environment name", runtime);
+    }
+    if (command || provider?.kind === "custom" || mode.kind !== "default" || reasoningEffort.value !== null
+      || model.kind !== "custom" || model.name !== CLAUDE_CAC_INHERITED_MODEL) {
+      return runtimeConfigError("invalid_cac_environment", "CAC owns the Claude command, provider, model, reasoning and mode", runtime);
+    }
+    if (Object.keys(envVars ?? {}).some(isClaudeCacControlledEnvKey)) {
+      return runtimeConfigError("invalid_env_vars", "runtimeConfig.envVars cannot override CAC configuration or proxy", runtime);
+    }
+  }
+
   const config = composeRuntimeConfig({
     runtime,
     provider,
@@ -3720,6 +3768,7 @@ export function parseRuntimeConfig(input: RuntimeConfigHydrationInput): RuntimeC
     loadLocalPlugins: loadLocalPlugins as boolean | undefined,
     envVars: stripControlledRuntimeEnvVars(runtime, envVars),
     command,
+    cacEnvironment: cacEnvironment as string | undefined,
   });
   return {
     ok: true,
@@ -3781,7 +3830,7 @@ export function buildLaunchPlan(config: RuntimeConfig): LaunchPlan {
       generatedEnvVars.ANTHROPIC_BASE_URL = normalized.provider.apiUrl;
       generatedEnvVars.ANTHROPIC_API_KEY = normalized.provider.apiKey;
     }
-    if (normalized.model.kind === "custom") {
+    if (!normalized.cacEnvironment && normalized.model.kind === "custom") {
       generatedEnvVars.ANTHROPIC_CUSTOM_MODEL_OPTION = normalized.model.name;
     }
   }
@@ -3801,6 +3850,7 @@ export function buildLaunchPlan(config: RuntimeConfig): LaunchPlan {
     reasoningEffort: normalized.reasoningEffort ?? null,
     envVars: Object.keys(envVars).length > 0 ? envVars : null,
     ...(normalized.command ? { command: normalized.command } : {}),
+    ...(normalized.runtime === "claude" && normalized.cacEnvironment ? { cacEnvironment: normalized.cacEnvironment } : {}),
     trace: {
       outcome: "materialized",
       runtime: normalized.runtime,

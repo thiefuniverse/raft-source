@@ -34,6 +34,7 @@ interface RuntimeConfigLegacyHydrationDeps {
     reasoningEffort?: RuntimeReasoningEffort | null;
     envVars?: Record<string, string> | null;
     command?: string | null;
+    cacEnvironment?: string | null;
     loadLocalPlugins?: boolean;
   }): RuntimeConfig;
 }
@@ -355,6 +356,8 @@ export function hydrateLegacyRuntimeConfigWithTrace(
     // launch env.
     envVars: deps.stripControlledRuntimeEnvVars(runtime, stored ? storedEnvVars : legacyEnvVars),
     command,
+    ...(runtime === "claude" && typeof storedConfig?.cacEnvironment === "string"
+      ? { cacEnvironment: storedConfig.cacEnvironment } : {}),
     ...(runtime === "builtin" && typeof storedConfig?.loadLocalPlugins === "boolean"
       ? { loadLocalPlugins: storedConfig.loadLocalPlugins } : {}),
   });

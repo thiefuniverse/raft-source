@@ -3,6 +3,7 @@ import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { hydrateRuntimeConfig, runtimeConfigToLaunchFields, type AgentConfig } from "@botiverse/raft-shared";
 import { isClaudeCustomProviderConfig } from "./claudeProviderIsolation";
+import { discoverClaudeCacEnvironments, probeClaudeCacEnvironment } from "./claudeCac";
 import type { RuntimeProbeResult } from "./types";
 import { firstExistingPath, formatCommandLookupTiming, lookupCommandOnPath, lookupCommandOnPathAsync, readCommandVersion, resolveHomePath, type CommandLookup, type ProbeDeps } from "./probe";
 import { resolveRuntimeLaunch, resolveWindowsDirectLaunch, type DirectLaunch, type WindowsLaunchDeps } from "./windowsLaunch";
@@ -70,6 +71,8 @@ export function probeClaude(deps: ProbeDeps = {}): RuntimeProbeResult {
   const lookupTiming = formatCommandLookupTiming(timing);
   const timingFields = lookupTiming ? { lookupTiming } : {};
   if (!command) {
+    const cac = discoverClaudeCacEnvironments(deps);
+    if (cac.kind === "live" && cac.environments.length > 0) return { available: true, ...timingFields };
     return { available: false, unavailableReason: missReason, ...timingFields, ...(lookupTiming ? { diagnostic: `lookup: ${lookupTiming}` } : {}) };
   }
   return {
@@ -80,6 +83,11 @@ export function probeClaude(deps: ProbeDeps = {}): RuntimeProbeResult {
 }
 
 export function probeClaudeLaunch(config: AgentConfig, deps: ProbeDeps = {}): RuntimeProbeResult {
+  const runtimeConfig = hydrateRuntimeConfig(config);
+  if (runtimeConfig.runtime === "claude" && runtimeConfig.cacEnvironment) {
+    try { return { available: true, version: probeClaudeCacEnvironment(runtimeConfig.cacEnvironment, deps).version }; }
+    catch { return { available: false, unavailableReason: "probe_failed", diagnostic: "Selected CAC environment is unavailable" }; }
+  }
   const launchDeps = {
     ...deps,
     env: { ...(deps.env ?? ambientProcessEnv()) },
@@ -106,12 +114,12 @@ export function buildClaudeArgs(
     "--output-format", "stream-json",
     "--input-format", "stream-json",
     "--include-partial-messages",
-    "--model", launchRuntimeFields.model || "sonnet",
+    ...(!launchRuntimeFields.cacEnvironment ? ["--model", launchRuntimeFields.model || "sonnet"] : []),
     "--disallowed-tools", CLAUDE_DISALLOWED_TOOLS,
     "--append-system-prompt-file", opts.standingPromptFilePath,
   ];
 
-  if (launchRuntimeFields.reasoningEffort) {
+  if (!launchRuntimeFields.cacEnvironment && launchRuntimeFields.reasoningEffort) {
     args.push("--effort", launchRuntimeFields.reasoningEffort);
   }
 
@@ -119,7 +127,7 @@ export function buildClaudeArgs(
     args.push("--setting-sources", "project,local");
   }
 
-  if (launchRuntimeFields.mode.kind === "fast") {
+  if (!launchRuntimeFields.cacEnvironment && launchRuntimeFields.mode.kind === "fast") {
     args.push("--settings", JSON.stringify({ fastMode: true }));
   }
 

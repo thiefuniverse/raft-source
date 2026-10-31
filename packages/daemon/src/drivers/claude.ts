@@ -1,5 +1,6 @@
 import { spawnRuntimeChild } from "./runtimeChild";
-import type { AgentConfig, AxSurfaceText } from "@botiverse/raft-shared";
+import { hydrateRuntimeConfig, parseRuntimeConfig, type AgentConfig, type AxSurfaceText } from "@botiverse/raft-shared";
+import { prepareClaudeCacLaunch } from "./claudeCac";
 import type { RuntimeDriver, SpawnContext, SpawnResult, ParsedEvent, RuntimeProbeResult } from "./types";
 import { buildCliTransportSystemPrompt, prepareCliTransport } from "./cliTransport";
 import { ClaudeEventNormalizer } from "./claudeEventNormalizer";
@@ -47,7 +48,10 @@ export class ClaudeDriver implements RuntimeDriver {
   } as const;
   readonly model = {
     detectedModelsVerifiedAs: "launchable",
-    toLaunchSpec: (modelId: string) => ({ args: ["--model", modelId] }),
+    toLaunchSpec: (modelId: string, ctx?: SpawnContext) => {
+      const config = ctx ? hydrateRuntimeConfig(ctx.config) : null;
+      return { args: config?.runtime === "claude" && config.cacEnvironment ? [] : ["--model", modelId] };
+    },
   } as const;
   readonly supportsStdinNotification = true;
   readonly acceptsStdinDuringCompaction = true;
@@ -85,6 +89,9 @@ export class ClaudeDriver implements RuntimeDriver {
   }
 
   async spawn(ctx: SpawnContext): Promise<SpawnResult> {
+    const runtimeConfig = hydrateRuntimeConfig(ctx.config);
+    const cacEnvironment = runtimeConfig.runtime === "claude" ? runtimeConfig.cacEnvironment : null;
+    if (cacEnvironment && !parseRuntimeConfig({ runtimeConfig }).ok) throw new Error("CAC: conflicting Claude configuration");
     // This preflight covers only daemon-owned launch text. Native `--resume`
     // history is assembled inside Claude Code and is not visible at this seam.
     assertClaudeStartupPayloadWithinBudget(ctx.config, `${ctx.standingPrompt}\n${ctx.prompt}`);
@@ -136,18 +143,33 @@ export class ClaudeDriver implements RuntimeDriver {
 
     // task #1277: the PATH lookup runs as a bounded probe child under this
     // start attempt's signal; a cancelled lookup is rethrown, never a verdict.
-    const claudeCommand = await resolveClaudeLaunchCommandAsync(ctx.config, { signal: ctx.launchSignal });
-    const spawnSpec = buildClaudeSpawnSpec(claudeCommand, args, { env: spawnEnv as NodeJS.ProcessEnv });
+    const claudeCommand = cacEnvironment ? null : await resolveClaudeLaunchCommandAsync(ctx.config, { signal: ctx.launchSignal });
 
     // task #365: after the last await, right before the child exists.
     ctx.assertLaunchCurrent?.();
     // A start stopped while the lookup ran must not create a child.
     if (ctx.launchSignal?.aborted) throw new ProbeChildError("claude launch cancelled before the child was created", { code: "ABORT_ERR" });
-    const proc = spawnRuntimeChild(spawnSpec.command, spawnSpec.args, {
-      cwd: ctx.workingDirectory,
-      stdio: ["pipe", "pipe", "pipe"],
-      env: spawnSpec.env ?? spawnEnv as NodeJS.ProcessEnv,
-      shell: false,
+    const cacLaunch = cacEnvironment ? prepareClaudeCacLaunch(cacEnvironment, args, {
+      stateDirectory: ctx.slockHome ?? resolveRaftHome(),
+      env: spawnEnv as NodeJS.ProcessEnv,
+      agentEnv: runtimeConfig.envVars,
+    }) : null;
+    const spawnSpec = cacLaunch ?? buildClaudeSpawnSpec(claudeCommand, args, { env: spawnEnv as NodeJS.ProcessEnv });
+    let proc: ReturnType<typeof spawnRuntimeChild>;
+    try {
+      proc = spawnRuntimeChild(spawnSpec.command, spawnSpec.args, {
+        cwd: ctx.workingDirectory,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: spawnSpec.env ?? spawnEnv as NodeJS.ProcessEnv,
+        shell: false,
+      });
+    } catch (error) {
+      cacLaunch?.cleanup();
+      throw error;
+    }
+    if (cacLaunch) proc.once("close", () => {
+      try { cacLaunch.cleanup(); }
+      catch { logger.warn(`[Agent ${ctx.agentId}] Could not remove private CAC launch files`); }
     });
 
     // Send initial prompt via stdin (stream-json format)

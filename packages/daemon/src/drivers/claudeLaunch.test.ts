@@ -3,6 +3,7 @@ import type { execFileSync } from "node:child_process";
 import path from "node:path";
 import { mkdtempSync, rmSync, statSync } from "node:fs";
 import os from "node:os";
+import { CLAUDE_CAC_INHERITED_MODEL } from "@botiverse/raft-shared";
 import {
   buildClaudeArgs,
   buildClaudeSpawnSpec,
@@ -72,6 +73,15 @@ test("claude launch command prefers structured runtimeConfig command", () => {
   });
 
   assert.equal(command, "claude-p");
+});
+
+test("CAC inherits model settings while retaining Raft stream transport, prompt, resume and MCP", () => {
+  const args = buildClaudeArgs({ ...config, sessionId: "fixture-session", runtimeConfig: {
+    version: 1, runtime: "claude", cacEnvironment: "fixture-env", provider: { kind: "default" },
+    model: { kind: "custom", name: CLAUDE_CAC_INHERITED_MODEL }, mode: { kind: "default" },
+  } } as any, { standingPromptFilePath: "/tmp/prompt.md", managedMcpConfigPath: "/tmp/mcp.json" });
+  for (const flag of ["--model", "--effort", "--settings", "--setting-sources"]) assert.equal(args.includes(flag), false, flag);
+  for (const value of ["--input-format", "--output-format", "stream-json", "--append-system-prompt-file", "/tmp/prompt.md", "--resume", "fixture-session", "--mcp-config", "/tmp/mcp.json", CLAUDE_DISALLOWED_TOOLS]) assert.equal(args.includes(value), true, value);
 });
 
 test("claude launch args pass reasoning effort and fast mode to Claude Code", () => {
