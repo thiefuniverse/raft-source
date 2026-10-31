@@ -55,6 +55,9 @@ pnpm install
 checks run through package scripts, for example
 `pnpm --filter @botiverse/raft-server test`.
 
+For a local deployment with web/databases in WSL and agent execution on native
+Windows, see [the Windows + WSL helpers](scripts/local-deployment/README.md).
+
 `pnpm --version` inside the repository must print the version declared in
 `packageManager`. Check the printed version, not whether the command runs:
 pnpm switches to the declared version by itself, but three older setups cannot

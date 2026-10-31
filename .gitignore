@@ -15,6 +15,8 @@ release/
 .env.scopedb
 .dev-env-*.json
 .slockdev/
+# Private local deployment config, Computer credentials, data and build output.
+/.raft-local/
 # Local uploads when the server or tests run from the repository root.
 /uploads/
 **/.wrangler/

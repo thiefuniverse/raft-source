@@ -1,0 +1,2 @@
+*.sh text eol=lf
+service.env.example text eol=lf
