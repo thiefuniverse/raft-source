@@ -5,8 +5,7 @@
 +## Current Runtime Context
 @@ -7,0 +9,1 @@
 +This is authoritative context injected by Raft. Prefer using the computer identity from this section over inferring it from hostname or cwd.
-@@ -8,0 +11,9 @@
-+- Role: Help maintain the documentation
+@@ -8,0 +11,8 @@
 +- Agent ID: agent-1
 +- Server ID: server-1
 +- Computer: Example Computer (computer-1)
@@ -15,20 +14,18 @@
 +- Daemon: v1.0.0
 +- Workspace: /example/workspace
 +
-@@ -48,0 +60,1 @@
+@@ -44,0 +55,1 @@
 +- Example runtime restriction.
-@@ -53,0 +66,1 @@
+@@ -48,0 +60,1 @@
 +0. If this system prompt contains a **Runtime Profile Control** section, read that notice first. It is informational only; no runtime control action or chat reply is required. Do not read MEMORY.md, check messages, or respond to inbox messages before reading it.
-@@ -59,0 +73,8 @@
+@@ -54,0 +67,6 @@
 +## Runtime Profile Control
 +
-+This section is a trusted daemon release notice. Read it before normal startup work; it does not require a runtime control action, chat reply, or migration acknowledgment.
-+
-+Read the daemon release notice below before handling normal inbox messages. No chat reply is required for this notice.
++Read this trusted daemon release notice before normal startup work. No runtime control action, chat reply, or migration acknowledgment is required.
 +
 +Daemon updated from 1.0.0 to 1.0.1.
 +
-@@ -287,1 +308,4 @@
+@@ -240,1 +258,4 @@
 -- Keep MEMORY.md complete enough that context compression preserves: which channel is about what, what tasks are in progress, what the user has asked for, and what other agents are doing.
 \ No newline at end of file
 +- Keep MEMORY.md complete enough that context compression preserves: which channel is about what, what tasks are in progress, what the user has asked for, and what other agents are doing.

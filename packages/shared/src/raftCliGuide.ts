@@ -27,8 +27,8 @@
  *     already running under the daemon, so they can assume the injected `slock`
  *     wrapper, concrete identity, and runtime context. The manual topic targets
  *     self-hosted setup/readers, so it may explain installation, profile login,
- *     `--profile`, and placeholders. Divergence here is intended setup/runtime
- *     wording, not guide drift.
+ *     `--profile`, and placeholders. Managed prompts summarize command discovery
+ *     and memory layout; full syntax and examples remain in the manual.
  *
  * Branching on `audience` must stay confined here so non-drift semantics remain
  * shared while audience-specific wording stays explicit.
@@ -242,6 +242,31 @@ function buildCommunicationSection(
   reminderApp: boolean,
 ): string {
   const installation = describeRaftInstallation(audience);
+  if (audience === "managed-runner") {
+    return `## Communication — raft CLI ONLY
+
+Use the provided \`raft\` CLI for Raft communication and management. ${installation} Run \`raft --help\` or a subcommand's \`--help\` for syntax.
+
+1. **Messages** — \`raft message\`: check, send, read, search, resolve, react.
+2. **Awareness** — \`raft server info\`, \`raft channel members\`.
+3. **Attention** — \`raft channel\`: join, leave, mute, unmute; \`raft thread unfollow\`.
+4. **Administration** — \`raft channel\`: create, update, archive, unarchive, add-member, remove-member; \`raft server update\`.
+5. **Tasks** — \`raft task\`: list, create, claim, unclaim, assign, unassign, update, amend, history, convert, delete.
+6. **Attachments** — \`raft attachment\`: upload, view.
+7. **Profiles** — \`raft profile\`: show, update.
+8. **Integrations** — \`raft integration\`: list, marketplace, login, env, invoke, app. These cover Raft Agent Login apps only. Local CLIs, runtime/MCP tools, and browser sessions are independent; use the route that fits the task and authority, honoring the user's choice. A missing app here may be accessible through those routes. Read the \`integration\` Manual topic when using a Raft Agent Login app. ${OFFICIAL_APPS_HINT}${buildInstalledAppDirectory(installedApps)}
+9. **Reminders** — ${describeRemindersCommands(audience, reminderApp)}
+10. **Action cards** — \`raft action prepare\`.
+11. **Manual** — \`raft manual get\`, \`raft manual search\`. Both require \`--intent\` (the user's goal) and \`--reason\` (why Manual is needed now): short summaries without raw prompts, credentials, private URLs, or message payloads. Full command workflows live in \`raft-cli-overview\`.
+12. **Versions** — ${describeRuntimeVersions(audience)}
+13. **Inbox** — \`raft inbox check\` lists unread conversations, newest first, with a read command per row and a final \`Next:\` step. \`--view mentions\` narrows it; \`--before <seq>\` from \`More:\` pages.
+14. **Unreached mentions you sent** — \`raft mention pending\`, \`raft mention notify <resolutionIds...>\`, \`raft mention add <resolutionIds...>\`.
+15. **People** — \`raft user info <name>\` shows visible facts/memberships and agent availability; blocked agents include the reason and usage-limit reset time.
+16. **Built-in apps** — \`system.reminder\` delivers reminders; \`system.cleaner\` warns about oversized MEMORY.md. \`raft app config --app <app-id>\` views settings/configures Cleaner; see the \`app\` Manual topic.
+17. **Auth** — ${describeAuthIntrospection(audience)}
+
+If a documented command, flag, or output field is missing, check \`--help\` and report that the machine may need upgrading: its CLI may be older than the Server's Manual. Missing syntax/fields do not prove that data or capabilities are absent. Successful commands print canonical human-readable text.`;
+  }
   return `## Communication — raft CLI ONLY
 
 Use the \`raft\` CLI for chat / task / attachment operations. ${installation} Use ONLY these command families for communication and management:
@@ -374,7 +399,16 @@ Threads are sub-conversations attached to a specific message. They let you discu
 - Threads cannot be nested — you cannot start a thread inside a thread.`;
 }
 
-function buildDiscoverySection(): string {
+function buildDiscoverySection(audience: RaftCliGuideAudience): string {
+  if (audience === "managed-runner") {
+    return `### Discovering people and channels
+
+\`raft server info\` returns counts and narrow queries, not a channel list. \`raft server info --channels\` lists one page; follow \`--offset\` for more pages before claiming coverage of every channel.
+
+Public channels with \`joined=false\` are readable via \`raft message read\` / \`raft channel members\`; join with \`raft channel join --target "#channel-name"\` before sending or receiving ordinary channel delivery. \`raft channel leave\` leaves; \`raft channel mute\` / \`raft channel unmute\` control ordinary channel delivery. Personal @mentions and DMs pierce mute (tasks only when they personally @mention you); followed threads deliver independently. \`raft thread unfollow --target "#channel-name:shortid"\` stops ordinary thread delivery.
+
+Private channels require a human with access to add you. Keep their names, members, and content private to that channel unless a human explicitly requests disclosure in an authorized context. Human owner/admin labels in \`raft channel members\` show server-level authority; an unlabeled human is an ordinary member.`;
+  }
   return `### Discovering people and channels
 
 Call \`raft server info\` for this server's summary: how many channels are visible and how many you have joined, the agent and human counts, and the narrow queries that list each. It does not list the channels itself — \`raft server info --channels\` does, and that listing is paged: it prints \`Showing 1-50 of N\` plus the \`--offset\` command for the next page. So one page is one page; a claim about every channel needs the pages you actually read, not the first window.
@@ -563,10 +597,21 @@ Write them inline as plain words in your sentence — the same way you'd type an
 Markdown markup expresses presentation semantics; do not mix markup delimiters into literal payloads. Code spans are literal, so if text should render as a link or ref, do not wrap that link/ref markup in backticks.`;
 }
 
-function buildWorkspaceAndMemorySection(memoryIndexBudgetBytes?: number): string {
+function buildWorkspaceAndMemorySection(audience: RaftCliGuideAudience, memoryIndexBudgetBytes?: number): string {
   const budgetSentence = memoryIndexBudgetBytes
     ? ` Target **${Math.round(memoryIndexBudgetBytes / 1024)} KB or less**: MEMORY.md is injected into the first input of every fresh session, and past that only the head is shown, so an oversize index hides its own tail. When it grows past that, move detail into \`notes/\` and keep only the pointers.`
     : "";
+  if (audience === "managed-runner") {
+    return `## Workspace & Memory
+
+Your cwd is a persistent, agent-owned workspace for memory, notes, artifacts, and task files; its layout is flexible and survives sessions.
+
+### MEMORY.md — Your Memory Index (CRITICAL)
+
+**MEMORY.md** is always the index. Keep it concise but comprehensive as a table of contents.${budgetSentence} Link detailed knowledge in \`notes/\` or other files; update the index when long-lived organization changes.
+
+Record significant learning proactively: user preferences, project architecture and conventions, domain knowledge, work history and decisions, channel purpose and ongoing work, and other agents' specialties/collaboration. Keep your role and active work recoverable; update notes and the index after significant interactions. Full layout examples are in the \`raft-cli-overview\` Manual topic.`;
+  }
   return `## Workspace & Memory
 
 Your working directory (cwd) is your **persistent, agent-owned workspace**; files you create here survive across sessions. Use it for memory, notes, artifacts, and task-specific files, but treat it as a flexible workspace rather than a fixed schema. Keep **MEMORY.md** easy to scan as the recovery entry point; if you add important long-lived organization, update **MEMORY.md** or a note index so future sessions can find it.
@@ -672,7 +717,7 @@ export function buildRaftCliGuideSections(
     sendingMessages: buildSendingMessagesSection(shell),
     reminders: buildRemindersSection(options.audience, options.reminderApp === true),
     threads: buildThreadsSection(shell),
-    discovery: buildDiscoverySection(),
+    discovery: buildDiscoverySection(options.audience),
     channelAwareness: buildChannelAwarenessSection(),
     readingHistory: buildReadingHistorySection(),
     historicalReferences: buildHistoricalReferencesSection(),
@@ -683,7 +728,7 @@ export function buildRaftCliGuideSections(
     conversationEtiquette: buildConversationEtiquetteSection(),
     liveConstraints: buildLiveConstraintsSection(),
     formattingMentionsChannels: buildFormattingMentionsChannelsSection(),
-    workspaceAndMemory: buildWorkspaceAndMemorySection(options.memoryIndexBudgetBytes),
+    workspaceAndMemory: buildWorkspaceAndMemorySection(options.audience, options.memoryIndexBudgetBytes),
     compactionSafety: buildCompactionSafetySection(),
   };
 }

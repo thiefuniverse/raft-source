@@ -48,6 +48,7 @@ test("role and runtime context are optional and do not bleed between agents", ()
     "name-sentinel", "host-sentinel", "os-sentinel", "version-sentinel", "/workspace-sentinel"]) {
     expect(populated).toContain(value);
   }
+  expect(populated.split("role-sentinel")).toHaveLength(2);
 
   const empty = buildCliSystemPrompt(promptConfig(), options);
   expect(empty).not.toContain("sentinel");
@@ -62,6 +63,14 @@ test("role and runtime context are optional and do not bleed between agents", ()
   }), options);
   expect(contextOnly).toContain("computer-1");
   expect(contextOnly).not.toContain("- Role:");
+});
+
+test("startup reuses injected memory and reads the file only when needed", () => {
+  const prompt = buildCliSystemPrompt(promptConfig(), options);
+  expect(prompt).toContain("Use the injected <memory-index> when present");
+  expect(prompt).toContain("no index was supplied, it changed, or you need omitted content");
+  expect(prompt).not.toContain("2. Read MEMORY.md");
+  expect(Buffer.byteLength(prompt)).toBeLessThan(24_000);
 });
 
 test.each([
@@ -88,9 +97,9 @@ test("release notices are rendered; retired migration controls never enter stand
 
 test("the MEMORY.md size target appears only for agents with constructed wake context on", () => {
   const target = /MEMORY\.md\*\* is always the index\. Keep it concise but comprehensive as a table of contents\. Target \*\*16 KB or less\*\*/;
-  assert.match(buildCliSystemPrompt(promptConfig({ constructedWakeContext: true }), options), target);
-  assert.notMatch(buildCliSystemPrompt(promptConfig({}), options), /KB or less/);
-  assert.notMatch(buildCliSystemPrompt(promptConfig({ constructedWakeContext: false }), options), /KB or less/);
+  expect(buildCliSystemPrompt(promptConfig({ constructedWakeContext: true }), options)).toMatch(target);
+  expect(buildCliSystemPrompt(promptConfig({}), options)).not.toMatch(/KB or less/);
+  expect(buildCliSystemPrompt(promptConfig({ constructedWakeContext: false }), options)).not.toMatch(/KB or less/);
 });
 
 // Task #319: the Server sends an installed-app snapshot with `agent:start`.

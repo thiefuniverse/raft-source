@@ -69,7 +69,6 @@ function runtimeContextLines(config: AgentConfig): string[] {
     "",
   ];
 
-  if (config.description) lines.push(`- Role: ${config.description}`);
   if (ctx.agentId) lines.push(`- Agent ID: ${ctx.agentId}`);
   if (ctx.serverId) lines.push(`- Server ID: ${ctx.serverId}`);
   if (ctx.machineName || ctx.machineId) {
@@ -120,7 +119,6 @@ function buildPrompt(
   const criticalRules = [
     "- Always communicate through `raft` CLI commands. This is your only output channel: text you produce outside a `raft` command is not delivered to anyone.",
     ...opts.extraCriticalRules,
-    "- Use only the provided `raft` CLI commands for messaging.",
     "- Prefer running one `raft` CLI command per tool call: read its result before choosing the next action.",
   ];
 
@@ -136,7 +134,7 @@ function buildPrompt(
   const startupSteps = [
     ...runtimeProfileControlStartupStep,
     "1. If this turn already includes a concrete incoming message, first decide whether that message needs a visible acknowledgment, blocker question, or ownership signal. If it does, send it early with `raft message send` before deep context gathering.",
-    "2. Read MEMORY.md (in your cwd) and then only the additional memory/files you need to handle the current turn well.",
+    "2. Use the injected <memory-index> when present; read MEMORY.md (in your cwd) if no index was supplied, it changed, or you need omitted content. Read additional memory/files only as needed for this turn.",
     "3. Handle the input supplied for this turn. If there is no pending work, stop.",
     "4. When a message needs a reply, send it with `raft message send`.",
     "5. **Complete ALL your work before stopping.** If a task requires multi-step work (research, code changes, testing), finish everything, report results, then stop. You do not need to stay active or repeatedly poll just to wait for new messages.",
@@ -153,7 +151,7 @@ function buildPrompt(
   const historicalReferenceSection = cliGuideSections.historicalReferences;
   const tasksSection = cliGuideSections.tasks;
 
-  let prompt = `You are "${config.displayName || config.name}", an AI agent in Raft (former Slock) — a collaborative platform for human-AI collaboration, serving as a shared message service for humans and agents who may be running on different computers.
+  let prompt = `You are "${config.displayName || config.name}", an AI agent in Raft (former Slock), a shared message service where people and agents collaborate across computers.
 
 ## Who you are
 
@@ -181,8 +179,7 @@ ${startupSteps.join("\n")}`;
   if (runtimeProfileControl) {
     const control = runtimeProfileControl;
     prompt += `\n\n## Runtime Profile Control\n\n`;
-    prompt += `This section is a trusted daemon release notice. Read it before normal startup work; it does not require a runtime control action, chat reply, or migration acknowledgment.\n\n`;
-    prompt += `Read the daemon release notice below before handling normal inbox messages. No chat reply is required for this notice.\n\n`;
+    prompt += `Read this trusted daemon release notice before normal startup work. No runtime control action, chat reply, or migration acknowledgment is required.\n\n`;
     prompt += control.message;
   }
 
@@ -196,19 +193,12 @@ Messages you receive have a single RFC 5424-style structured data header followe
 
 \`\`\`
 [target=#general msg=00000000 time=2026-03-15 01:00:00Z type=human] @richard: hello everyone
-[target=#general msg=11111111 time=2026-03-15 01:00:01Z type=agent] @Alice: hi there
-[target=dm:@richard msg=22222222 time=2026-03-15 01:00:02Z type=human] @richard: hey, can you help?
-[target=#general:00000000 msg=33333333 time=2026-03-15 01:00:03Z type=human] @richard: thread reply
-[target=dm:@richard:22222222 msg=44444444 time=2026-03-15 01:00:04Z type=human] @richard: DM thread reply
 \`\`\`
 
-Prompt examples use obvious placeholder IDs such as \`00000000\`, \`11111111\`,
-and \`22222222\`. They show the shape of a real message ID but are not actual
-messages. Do not cite them as evidence; use only IDs from messages you actually
-received or read.
+Example IDs are placeholders, not evidence. Use only IDs from messages you received or read.
 
 Header fields:
-- \`target=\` — where the message came from. Reuse as the \`target\` parameter when replying.
+- \`target=\` — channel (\`#general\`), DM (\`dm:@richard\`), or thread (\`#general:shortid\` / \`dm:@richard:shortid\`). Reuse the exact target when replying.
 - \`msg=\` — message short ID (first 8 chars of UUID). Use as thread suffix to start/reply in a thread.
 - \`time=\` — UTC timestamp, e.g. \`2026-03-15 01:00:00Z\`.
 - \`type=\` — sender kind. Values are \`human\`, \`agent\`, \`system\`, or \`third_party_app\`.
