@@ -38,7 +38,7 @@ test.each([
   }
 });
 
-test.each(["pi", "builtin"])("%s standing prompt (PowerShell)", async (runtime) => {
+test.each(["codex", "pi", "builtin"])("%s standing prompt (PowerShell)", async (runtime) => {
   const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
   try {
     Object.defineProperty(process, "platform", { value: "win32" });

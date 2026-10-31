@@ -1,10 +1,30 @@
 import { buildCliSystemPrompt, SUBAGENT_DELEGATION_SECTION, type SystemPromptOptions } from "./systemPrompt";
 import { ClaudeDriver } from "./claude";
+import { CodexDriver } from "./codex";
 import { promptConfig } from "../testing/promptFixture";
 
 const options: SystemPromptOptions = {
   extraCriticalRules: [],
 };
+
+test.each(["win32", "linux"])("Codex message guidance uses the native shell on %s", (platform) => {
+  const descriptor = Object.getOwnPropertyDescriptor(process, "platform")!;
+  try {
+    Object.defineProperty(process, "platform", { value: platform });
+    const prompt = new CodexDriver().buildSystemPrompt(promptConfig({ runtime: "codex" }), "agent-1");
+    if (platform === "win32") {
+      expect(prompt).toContain("$OutputEncoding = $utf8NoBom");
+      expect(prompt).toContain("[Console]::OutputEncoding = $utf8NoBom");
+      expect(prompt).toContain("'@ | raft message send");
+      expect(prompt).not.toContain("raft message send --target \"#channel-name\" <<");
+    } else {
+      expect(prompt).toContain("raft message send --target \"#channel-name\" <<");
+      expect(prompt).not.toContain("$OutputEncoding");
+    }
+  } finally {
+    Object.defineProperty(process, "platform", descriptor);
+  }
+});
 
 test("display-name fallback preserves the independent mention handle", () => {
   for (const displayName of ["Display Sentinel", ""]) {

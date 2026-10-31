@@ -7,7 +7,7 @@ import { readFileSync, existsSync, mkdirSync, mkdtempSync, renameSync, rmSync, s
 import path from "node:path";
 import os from "node:os";
 import { buildCliTransportDir, deriveCliFallbackCandidates, deriveOpencliFallbackCandidates, prepareCliTransport, setProcSelfExeReaderForTests, regenerateExistingOpencliWrappers, SLOCK_AGENT_LAUNCH_DIR_ENV, upgradeExistingAgentWrappers, writeOpencliWrapper } from "./cliTransport";
-import { CONTEXT_GENERATION_FILENAME } from "@botiverse/raft-shared";
+import { buildRaftCliGuideSections, CONTEXT_GENERATION_FILENAME } from "@botiverse/raft-shared";
 import { applyLoopbackNoProxyEnv } from "../loopbackNoProxy";
 import type { SpawnContext } from "./types";
 
@@ -380,6 +380,35 @@ process.stdin.on("end", () => {
 
     assert.equal(result.status, 0, result.stderr || result.stdout);
     assert.equal(readFileSync(outPath, "utf8").trim(), text);
+  } finally {
+    rmSync(tmp, { recursive: true, force: true });
+  }
+});
+
+test("PowerShell message example preserves Unicode through a native proxy", { skip: process.platform !== "win32" }, () => {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), "slock-cli-encoding-"));
+  try {
+    const capture = path.join(tmp, "capture.cjs");
+    const proxy = path.join(tmp, "proxy.cmd");
+    const output = path.join(tmp, "stdin.txt");
+    writeFileSync(capture, `const fs = require('node:fs'); const chunks = []; process.stdin.on('data', c => chunks.push(c)); process.stdin.on('end', () => fs.writeFileSync(process.env.SLOCK_TEST_OUT, Buffer.concat(chunks)));`);
+    // A native proxy bypasses raft.ps1, so the caller must set the pipeline encoding.
+    writeFileSync(proxy, `@echo off\r\n"${process.execPath}" "${capture}" %*\r\n`);
+    const text = '中文消息，保留标点？😀\n"quotes" $vars `backticks` worktree';
+    const section = buildRaftCliGuideSections({ audience: "managed-runner", identity: { handle: "alice", displayName: "Alice" }, shell: "powershell" }).sendingMessages;
+    const example = /```powershell\n([\s\S]*?)\n```/.exec(section)?.[1];
+    assert.ok(example, "the guide must include an executable PowerShell example");
+    const command = "$OutputEncoding = [System.Text.Encoding]::ASCII\n" + example
+      .replace('Long message with "quotes", $vars, `backticks`, and code blocks.', text)
+      .replace('| raft message send', `| & '${proxy.replace(/'/g, "''")}' message send`);
+    const result = spawnSync("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", Buffer.from(command, "utf16le").toString("base64")], {
+      env: { ...process.env, SLOCK_TEST_OUT: output },
+      encoding: "utf8",
+      timeout: 10_000,
+      windowsHide: true,
+    });
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    assert.equal(readFileSync(output, "utf8").replace(/^\uFEFF/, "").replace(/\r\n/g, "\n"), text + "\n");
   } finally {
     rmSync(tmp, { recursive: true, force: true });
   }

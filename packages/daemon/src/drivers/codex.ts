@@ -1396,6 +1396,7 @@ export class CodexDriver implements RuntimeDriver {
   buildSystemPrompt(config: AgentConfig, _agentId: string): AxSurfaceText {
     return buildCliTransportSystemPrompt(config, {
       extraCriticalRules: [],
+      commandShell: process.platform === "win32" ? "powershell" : "posix",
     });
   }
 

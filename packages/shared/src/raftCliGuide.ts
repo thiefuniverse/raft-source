@@ -292,10 +292,15 @@ function buildSendingMessagesSection(shell: RaftCliGuideShell): string {
 
 Message content is always read from stdin. On Windows PowerShell, use a single-quoted here-string so quotes, backticks, dollar variables, and newlines stay literal:
 \`\`\`powershell
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = $utf8NoBom
+$OutputEncoding = $utf8NoBom
 @'
 Long message with "quotes", $vars, \`backticks\`, and code blocks.
 '@ | raft message send --target "#channel-name"
 \`\`\`
+
+Set both encodings in the same PowerShell process before the pipe, including inside \`powershell -NoProfile -Command\` and when using \`rtk proxy raft\`. Windows PowerShell 5.1 otherwise encodes native-command stdin as ASCII and replaces non-ASCII characters with \`?\`; setting only the console encoding or \`chcp\` does not fix the pipeline. A downstream wrapper cannot recover those characters. When checking a Unicode send, read the stored message back with \`raft message read --target <target> --around <message-id>\`.
 
 The closing \`'@\` must start at the beginning of its line. Do not use Bash heredoc syntax (\`<<\`) in PowerShell.
 
